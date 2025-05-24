@@ -1,0 +1,4 @@
+body { font-family: Arial, sans-serif; min-width: 300px; }
+#tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+#tabs button { flex: 1; padding: 6px; cursor: pointer; }
+.tab-content { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }

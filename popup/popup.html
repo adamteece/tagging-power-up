@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Tagging Power-Up</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="tabs">
+    <button id="tab-inspector">Element Inspector</button>
+    <button id="tab-rules">Page Rules</button>
+    <button id="tab-help">Help</button>
+  </div>
+  <div id="content-inspector" class="tab-content">
+    <h2>Element Inspector</h2>
+    <button id="activate-inspector">Activate Inspector</button>
+    <div id="selector-section" style="display:none; margin-top: 10px;">
+      <label for="selector-input">CSS Selector:</label>
+      <select id="selector-options" style="width: 70%;"></select>
+      <button id="copy-selector">Copy</button>
+      <button id="validate-selector">Count Matches</button>
+      <span id="match-count"></span>
+    </div>
+  </div>
+  <div id="content-rules" class="tab-content" style="display:none;">Page Rule Generator UI goes here</div>
+  <div id="content-help" class="tab-content" style="display:none;">Help/About content goes here</div>
+  <script src="popup.js"></script>
+</body>
+</html>
