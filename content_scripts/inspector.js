@@ -123,6 +123,8 @@ async function createSelectorOverlay() {
   selectorOverlay.querySelector('#tp-close-overlay').onclick = () => {
     selectorOverlay.remove();
     selectorOverlay = null;
+    // Remove any leftover highlight when the overlay is closed
+    removeHighlightBox();
   };
 }
 
