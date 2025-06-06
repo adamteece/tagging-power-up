@@ -1,3 +1,36 @@
+// --- Multi-element selection support ---
+const selectedElements = new Set();
+
+function addElementToSelection(el) {
+  if (!selectedElements.has(el)) {
+    selectedElements.add(el);
+    el.classList.add('tp-multiselect-highlight');
+  }
+}
+
+function removeElementFromSelection(el) {
+  if (selectedElements.has(el)) {
+    selectedElements.delete(el);
+    el.classList.remove('tp-multiselect-highlight');
+  }
+}
+
+function clearSelection() {
+  for (const el of selectedElements) {
+    el.classList.remove('tp-multiselect-highlight');
+  }
+  selectedElements.clear();
+  updateSelectedCount();
+}
+
+function updateSelectedCount() {
+  if (selectorOverlay) {
+    const countSpan = selectorOverlay.querySelector('#tp-selected-count');
+    if (countSpan) {
+      countSpan.textContent = `Selected: ${selectedElements.size}`;
+    }
+  }
+}
 // Tagging Power-Up Element Inspector Content Script
 // Handles element selection, Shadow DOM traversal, selector generation, and match counting.
 
@@ -56,7 +89,11 @@ async function createSelectorOverlay() {
       </span>
       <span id="tp-close-overlay" style="cursor:pointer;font-size:20px;color:#aaa;">✕</span>
     </div>
-    <button id="tp-select-element" style="background:#1fa3c9;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-weight:600;font-size:15px;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,0.04);margin-bottom:2px;">Select New Element</button>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:2px;">
+      <button id="tp-select-element" style="background:#1fa3c9;color:#fff;border:none;border-radius:6px;padding:8px 16px;font-weight:600;font-size:15px;cursor:pointer;box-shadow:0 1px 2px rgba(0,0,0,0.04);">Select New Element</button>
+      <button id="tp-clear-selection" style="background:#f44336;color:#fff;border:none;border-radius:6px;padding:8px 12px;font-weight:600;font-size:15px;cursor:pointer;">Clear Selection</button>
+      <span id="tp-selected-count" style="font-size:14px;color:#1976d2;font-weight:600;">Selected: 0</span>
+    </div>
     <div id="tp-selector-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:2px;"></div>
     <div style="display:flex;align-items:center;gap:8px;">
       <button id="tp-up-element" title="Select Parent" style="background:#f3f4f8;border:none;border-radius:5px;padding:4px 8px;cursor:pointer;font-size:16px;">↑</button>
@@ -75,7 +112,11 @@ async function createSelectorOverlay() {
       <input id="tp-custom-attr-input" style="flex:1;padding:3px 6px;border:1px solid #e0e4ea;border-radius:4px;font-size:13px;" placeholder="e.g. data-qa, data-role" />
       <button id="tp-save-custom-attr" style="margin-left:6px;background:#1976d2;color:#fff;border:none;border-radius:4px;padding:4px 10px;font-weight:600;cursor:pointer;">Save</button>
     </div>
+    <style>.tp-multiselect-highlight { outline: 2.5px solid #f44336 !important; background: rgba(244,67,54,0.08) !important; }</style>
   `;
+  // Clear selection button
+  selectorOverlay.querySelector('#tp-clear-selection').onclick = clearSelection;
+  updateSelectedCount();
   document.body.appendChild(selectorOverlay);
 
   // Custom attribute input logic always present
@@ -329,11 +370,48 @@ function handleClick(e) {
   if (!inspectorActive) return;
   e.preventDefault();
   e.stopPropagation();
+  const el = getDeepElementFromPoint(e.clientX, e.clientY);
+  if (!el) return;
+
+  // Multi-select logic
+  const isMulti = e.ctrlKey || e.metaKey;
+  const isRange = e.shiftKey;
+  if (isMulti) {
+    if (selectedElements.has(el)) {
+      removeElementFromSelection(el);
+    } else {
+      addElementToSelection(el);
+    }
+    updateSelectedCount();
+    // Don't close inspector overlay, allow more selection
+    return;
+  } else if (isRange && selectedElements.size > 0) {
+    // Range select: select all siblings between last selected and this
+    const last = Array.from(selectedElements).slice(-1)[0];
+    if (last && el.parentElement === last.parentElement) {
+      const siblings = Array.from(el.parentElement.children);
+      const start = siblings.indexOf(last);
+      const end = siblings.indexOf(el);
+      if (start !== -1 && end !== -1) {
+        const [from, to] = start < end ? [start, end] : [end, start];
+        for (let i = from; i <= to; i++) {
+          addElementToSelection(siblings[i]);
+        }
+      }
+    }
+    updateSelectedCount();
+    return;
+  } else {
+    // Single select: clear previous, select this
+    clearSelection();
+    addElementToSelection(el);
+    updateSelectedCount();
+  }
+
   inspectorActive = false;
   removeHighlightBox();
   document.removeEventListener('mousemove', handleMouseMove, true);
   document.removeEventListener('click', handleClick, true);
-  const el = getDeepElementFromPoint(e.clientX, e.clientY);
   const selectorOptions = generateSelector(el);
   console.log('[Tagging Power-Up] Element selected:', selectorOptions);
   showSelectorOverlay(selectorOptions, el);
