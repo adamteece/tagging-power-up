@@ -42,6 +42,8 @@ let selectorOverlayDrag = { dragging: false, offsetX: 0, offsetY: 0 };
 let currentElement = null;
 let currentSelectorOptions = [];
 let currentSelectorIndex = 0;
+let currentSelectorComponents = [];
+let usingCustomSelector = false;
 let parentStack = [];
 let childIndexStack = [];
 let customAttributes = [];
@@ -100,6 +102,16 @@ async function createSelectorOverlay() {
       <button id="tp-down-element" title="Select Child" style="background:#f3f4f8;border:none;border-radius:5px;padding:4px 8px;cursor:pointer;font-size:16px;">↓</button>
       <span style="font-size:13px;color:#888;">Navigate DOM</span>
     </div>
+    <div style="margin-top:10px;">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+        <label style="font-size:14px;color:#444;font-weight:600;">Selector Mode:</label>
+        <button id="tp-toggle-mode" style="background:#fff;color:#1976d2;border:1px solid #1976d2;border-radius:4px;padding:4px 12px;font-weight:600;cursor:pointer;font-size:13px;">Custom Builder</button>
+      </div>
+    </div>
+    <div id="tp-components-section" style="display:none;margin-top:8px;border:1px solid #e0e4ea;border-radius:6px;padding:10px;background:#f9f9f9;">
+      <div style="font-size:13px;color:#444;font-weight:600;margin-bottom:6px;">Select components to build custom selector:</div>
+      <div id="tp-component-list" style="display:flex;flex-direction:column;gap:4px;max-height:120px;overflow-y:auto;"></div>
+    </div>
     <div style="margin-top:6px;">
       <label style="font-size:13px;color:#444;">Selection:</label>
       <input id="tp-selector-input" style="width:100%;margin-top:2px;padding:4px 6px;border:1px solid #e0e4ea;border-radius:4px;font-size:14px;" readonly />
@@ -117,6 +129,39 @@ async function createSelectorOverlay() {
   // Clear selection button
   selectorOverlay.querySelector('#tp-clear-selection').onclick = clearSelection;
   updateSelectedCount();
+  
+  // Toggle mode button
+  selectorOverlay.querySelector('#tp-toggle-mode').onclick = () => {
+    usingCustomSelector = !usingCustomSelector;
+    const toggleBtn = selectorOverlay.querySelector('#tp-toggle-mode');
+    const componentsSection = selectorOverlay.querySelector('#tp-components-section');
+    const chipsSection = selectorOverlay.querySelector('#tp-selector-chips');
+    
+    if (usingCustomSelector) {
+      toggleBtn.textContent = 'Preset Selectors';
+      toggleBtn.style.background = '#1976d2';
+      toggleBtn.style.color = '#fff';
+      componentsSection.style.display = 'block';
+      chipsSection.style.display = 'none';
+      
+      // Generate and show components for current element
+      if (currentElement) {
+        currentSelectorComponents = generateSelectorComponents(currentElement);
+        updateComponentsList();
+        updateSelectorInput();
+      }
+    } else {
+      toggleBtn.textContent = 'Custom Builder';
+      toggleBtn.style.background = '#fff';
+      toggleBtn.style.color = '#1976d2';
+      componentsSection.style.display = 'none';
+      chipsSection.style.display = 'flex';
+      
+      // Reset to preset selector mode
+      updateSelectorInput();
+    }
+  };
+  
   document.body.appendChild(selectorOverlay);
 
   // Custom attribute input logic always present
@@ -137,6 +182,8 @@ async function createSelectorOverlay() {
     // Re-show overlay to update selector options
     if (currentElement) {
       const options = generateSelector(currentElement);
+      // Regenerate components as well since custom attributes changed
+      currentSelectorComponents = generateSelectorComponents(currentElement);
       showSelectorOverlay(options, currentElement);
     }
   };
@@ -183,6 +230,9 @@ async function showSelectorOverlay(selectorOptions, element) {
     currentElement = element;
     currentSelectorOptions = selectorOptions || [];
     currentSelectorIndex = 0;
+    // Reset to preset mode when selecting new element
+    usingCustomSelector = false;
+    currentSelectorComponents = generateSelectorComponents(element);
   }
   // Highlight the selected element in the DOM
   if (currentElement) {
@@ -220,12 +270,22 @@ async function showSelectorOverlay(selectorOptions, element) {
 
   // Copy button
   selectorOverlay.querySelector('#tp-copy-selector').onclick = () => {
-    navigator.clipboard.writeText(currentSelectorOptions[currentSelectorIndex].selector);
+    const selector = usingCustomSelector ? 
+      buildCustomSelector() : 
+      currentSelectorOptions[currentSelectorIndex].selector;
+    if (selector) {
+      navigator.clipboard.writeText(selector);
+    }
   };
   // Validate button
   selectorOverlay.querySelector('#tp-validate-selector').onclick = () => {
-    const count = countMatchesDeep(currentSelectorOptions[currentSelectorIndex].selector);
-    selectorOverlay.querySelector('#tp-match-count').textContent = `Matches: ${count} element${count === 1 ? '' : 's'}`;
+    const selector = usingCustomSelector ? 
+      buildCustomSelector() : 
+      currentSelectorOptions[currentSelectorIndex].selector;
+    if (selector) {
+      const count = countMatchesDeep(selector);
+      selectorOverlay.querySelector('#tp-match-count').textContent = `Matches: ${count} element${count === 1 ? '' : 's'}`;
+    }
   };
 
   // Up navigation: go to parent and remember which child you came from
@@ -261,16 +321,140 @@ async function showSelectorOverlay(selectorOptions, element) {
     activateInspector();
     selectorOverlay.style.display = 'none';
   };
+  
+  // Update UI state based on current mode
+  const toggleBtn = selectorOverlay.querySelector('#tp-toggle-mode');
+  const componentsSection = selectorOverlay.querySelector('#tp-components-section');
+  const chipsSection = selectorOverlay.querySelector('#tp-selector-chips');
+  
+  if (usingCustomSelector) {
+    toggleBtn.textContent = 'Preset Selectors';
+    toggleBtn.style.background = '#1976d2';
+    toggleBtn.style.color = '#fff';
+    componentsSection.style.display = 'block';
+    chipsSection.style.display = 'none';
+    updateComponentsList();
+  } else {
+    toggleBtn.textContent = 'Custom Builder';
+    toggleBtn.style.background = '#fff';
+    toggleBtn.style.color = '#1976d2';
+    componentsSection.style.display = 'none';
+    chipsSection.style.display = 'flex';
+  }
+}
+
+function updateComponentsList() {
+  const componentList = selectorOverlay.querySelector('#tp-component-list');
+  if (!componentList || !currentSelectorComponents) return;
+  
+  componentList.innerHTML = '';
+  currentSelectorComponents.forEach((component, idx) => {
+    const item = document.createElement('label');
+    item.style.display = 'flex';
+    item.style.alignItems = 'center';
+    item.style.gap = '6px';
+    item.style.cursor = 'pointer';
+    item.style.fontSize = '13px';
+    item.style.padding = '2px 0';
+    
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = component.selected;
+    checkbox.style.marginRight = '4px';
+    checkbox.onchange = () => {
+      currentSelectorComponents[idx].selected = checkbox.checked;
+      updateSelectorInput();
+    };
+    
+    const label = document.createElement('span');
+    label.textContent = component.label;
+    label.style.color = component.selected ? '#1976d2' : '#666';
+    
+    item.appendChild(checkbox);
+    item.appendChild(label);
+    componentList.appendChild(item);
+    
+    // Update label color when checkbox changes
+    checkbox.onchange = () => {
+      currentSelectorComponents[idx].selected = checkbox.checked;
+      label.style.color = checkbox.checked ? '#1976d2' : '#666';
+      updateSelectorInput();
+    };
+  });
+}
+
+function buildCustomSelector() {
+  if (!currentSelectorComponents) return '';
+  
+  const selectedComponents = currentSelectorComponents.filter(c => c.selected);
+  if (selectedComponents.length === 0) return '';
+  
+  // Group components by type to build a valid selector
+  const tag = selectedComponents.find(c => c.type === 'tag');
+  const id = selectedComponents.find(c => c.type === 'id');
+  const classes = selectedComponents.filter(c => c.type === 'class');
+  const attributes = selectedComponents.filter(c => c.type === 'attribute');
+  const nthChild = selectedComponents.find(c => c.type === 'nth-child');
+  const contains = selectedComponents.find(c => c.type === 'contains');
+  
+  let selector = '';
+  
+  // Start with tag if selected
+  if (tag) {
+    selector += tag.selector;
+  }
+  
+  // Add ID
+  if (id) {
+    selector += id.selector;
+  }
+  
+  // Add classes
+  classes.forEach(c => {
+    selector += c.selector;
+  });
+  
+  // Add attributes
+  attributes.forEach(a => {
+    selector += a.selector;
+  });
+  
+  // Add nth-child
+  if (nthChild) {
+    selector += nthChild.selector;
+  }
+  
+  // Add contains (typically used with tag)
+  if (contains && tag) {
+    selector = tag.selector + contains.selector;
+  } else if (contains && !tag) {
+    selector += '*' + contains.selector;
+  }
+  
+  return selector;
 }
 
 function updateSelectorInput() {
   const input = selectorOverlay.querySelector('#tp-selector-input');
-  if (currentSelectorOptions.length > 0) {
-    input.value = currentSelectorOptions[currentSelectorIndex].selector;
+  if (!input) return;
+  
+  if (usingCustomSelector) {
+    // Show custom built selector
+    input.value = buildCustomSelector();
   } else {
-    input.value = '';
+    // Show preset selector
+    if (currentSelectorOptions.length > 0) {
+      input.value = currentSelectorOptions[currentSelectorIndex].selector;
+    } else {
+      input.value = '';
+    }
   }
-  selectorOverlay.querySelector('#tp-match-count').textContent = '';
+  
+  // Clear match count when selector changes
+  const matchCount = selectorOverlay.querySelector('#tp-match-count');
+  if (matchCount) {
+    matchCount.textContent = '';
+  }
 }
 
 function createHighlightBox() {
@@ -312,6 +496,110 @@ function highlightElement(el) {
   highlightBox.style.top = rect.top + 'px';
   highlightBox.style.width = rect.width + 'px';
   highlightBox.style.height = rect.height + 'px';
+}
+
+function generateSelectorComponents(el) {
+  // Generate individual selector components that can be combined
+  if (!el) return [];
+  const components = [];
+  
+  // Tag name component
+  components.push({
+    type: 'tag',
+    selector: el.tagName.toLowerCase(),
+    label: `Tag: ${el.tagName.toLowerCase()}`,
+    selected: true
+  });
+  
+  // ID component
+  if (el.id) {
+    components.push({
+      type: 'id',
+      selector: `#${CSS.escape(el.id)}`,
+      label: `ID: #${el.id}`,
+      selected: false
+    });
+  }
+  
+  // Individual class components
+  if (el.classList.length) {
+    Array.from(el.classList).forEach(className => {
+      components.push({
+        type: 'class',
+        selector: `.${CSS.escape(className)}`,
+        label: `Class: .${className}`,
+        selected: false
+      });
+    });
+  }
+  
+  // Attribute components
+  if (el.getAttribute('data-testid')) {
+    components.push({
+      type: 'attribute',
+      selector: `[data-testid="${el.getAttribute('data-testid')}"]`,
+      label: `Attribute: data-testid="${el.getAttribute('data-testid')}"`,
+      selected: false
+    });
+  }
+  
+  // Custom attribute components
+  if (Array.isArray(customAttributes)) {
+    customAttributes.forEach(attr => {
+      if (attr && el.hasAttribute && el.hasAttribute(attr)) {
+        components.push({
+          type: 'attribute',
+          selector: `[${attr}="${el.getAttribute(attr)}"]`,
+          label: `Attribute: ${attr}="${el.getAttribute(attr)}"`,
+          selected: false
+        });
+      }
+    });
+  }
+  
+  // Other standard attributes that might be useful
+  ['name', 'value', 'title', 'alt', 'role'].forEach(attr => {
+    if (el.hasAttribute(attr) && !customAttributes.includes(attr)) {
+      const value = el.getAttribute(attr);
+      if (value) {
+        components.push({
+          type: 'attribute',
+          selector: `[${attr}="${value}"]`,
+          label: `Attribute: ${attr}="${value}"`,
+          selected: false
+        });
+      }
+    }
+  });
+  
+  // Nth-child component
+  if (el.parentElement) {
+    const siblings = Array.from(el.parentElement.children).filter(e => e.tagName === el.tagName);
+    if (siblings.length > 1) {
+      const idx = siblings.indexOf(el) + 1;
+      components.push({
+        type: 'nth-child',
+        selector: `:nth-of-type(${idx})`,
+        label: `Position: nth-of-type(${idx})`,
+        selected: false
+      });
+    }
+  }
+  
+  // Text content component (for contains selector)
+  const text = (el.textContent || '').trim();
+  if (text && text.length < 50 && text.length > 2) {
+    // Truncate long text for display
+    const displayText = text.length > 30 ? text.substring(0, 30) + '...' : text;
+    components.push({
+      type: 'contains',
+      selector: `:contains("${text}")`,
+      label: `Text: contains("${displayText}")`,
+      selected: false
+    });
+  }
+  
+  return components;
 }
 
 function generateSelector(el) {
