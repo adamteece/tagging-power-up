@@ -344,8 +344,9 @@ async function showSelectorOverlay(selectorOptions, element) {
 }
 
 function updateComponentsList() {
+  if (!selectorOverlay) return;
   const componentList = selectorOverlay.querySelector('#tp-component-list');
-  if (!componentList || !currentSelectorComponents) return;
+  if (!componentList || !Array.isArray(currentSelectorComponents)) return;
   
   componentList.innerHTML = '';
   currentSelectorComponents.forEach((component, idx) => {
@@ -361,10 +362,6 @@ function updateComponentsList() {
     checkbox.type = 'checkbox';
     checkbox.checked = component.selected;
     checkbox.style.marginRight = '4px';
-    checkbox.onchange = () => {
-      currentSelectorComponents[idx].selected = checkbox.checked;
-      updateSelectorInput();
-    };
     
     const label = document.createElement('span');
     label.textContent = component.label;
@@ -374,7 +371,7 @@ function updateComponentsList() {
     item.appendChild(label);
     componentList.appendChild(item);
     
-    // Update label color when checkbox changes
+    // Update component selection and UI when checkbox changes
     checkbox.onchange = () => {
       currentSelectorComponents[idx].selected = checkbox.checked;
       label.style.color = checkbox.checked ? '#1976d2' : '#666';
@@ -384,7 +381,7 @@ function updateComponentsList() {
 }
 
 function buildCustomSelector() {
-  if (!currentSelectorComponents) return '';
+  if (!currentSelectorComponents || !Array.isArray(currentSelectorComponents)) return '';
   
   const selectedComponents = currentSelectorComponents.filter(c => c.selected);
   if (selectedComponents.length === 0) return '';
@@ -399,36 +396,34 @@ function buildCustomSelector() {
   
   let selector = '';
   
-  // Start with tag if selected
-  if (tag) {
-    selector += tag.selector;
-  }
-  
-  // Add ID
-  if (id) {
-    selector += id.selector;
-  }
-  
-  // Add classes
-  classes.forEach(c => {
-    selector += c.selector;
-  });
-  
-  // Add attributes
-  attributes.forEach(a => {
-    selector += a.selector;
-  });
-  
-  // Add nth-child
-  if (nthChild) {
-    selector += nthChild.selector;
-  }
-  
-  // Add contains (typically used with tag)
-  if (contains && tag) {
-    selector = tag.selector + contains.selector;
-  } else if (contains && !tag) {
-    selector += '*' + contains.selector;
+  // Handle contains selector specially - it needs to modify the whole selector
+  if (contains) {
+    if (tag) {
+      selector = tag.selector + contains.selector;
+    } else {
+      selector = '*' + contains.selector;
+    }
+  } else {
+    // Build normal selector
+    if (tag) {
+      selector += tag.selector;
+    }
+    
+    if (id) {
+      selector += id.selector;
+    }
+    
+    classes.forEach(c => {
+      selector += c.selector;
+    });
+    
+    attributes.forEach(a => {
+      selector += a.selector;
+    });
+    
+    if (nthChild) {
+      selector += nthChild.selector;
+    }
   }
   
   return selector;
@@ -503,7 +498,7 @@ function generateSelectorComponents(el) {
   if (!el) return [];
   const components = [];
   
-  // Tag name component
+  // Tag name component (always selected by default)
   components.push({
     type: 'tag',
     selector: el.tagName.toLowerCase(),
@@ -522,7 +517,7 @@ function generateSelectorComponents(el) {
   }
   
   // Individual class components
-  if (el.classList.length) {
+  if (el.classList.length > 0) {
     Array.from(el.classList).forEach(className => {
       components.push({
         type: 'class',
@@ -533,35 +528,29 @@ function generateSelectorComponents(el) {
     });
   }
   
-  // Attribute components
-  if (el.getAttribute('data-testid')) {
-    components.push({
-      type: 'attribute',
-      selector: `[data-testid="${el.getAttribute('data-testid')}"]`,
-      label: `Attribute: data-testid="${el.getAttribute('data-testid')}"`,
-      selected: false
-    });
-  }
+  // Standard and custom attribute components
+  const attributesToCheck = [
+    'data-testid',
+    'data-qa', 
+    'data-role',
+    'name',
+    'value',
+    'title',
+    'alt',
+    'role'
+  ];
   
-  // Custom attribute components
+  // Add custom attributes from storage
   if (Array.isArray(customAttributes)) {
-    customAttributes.forEach(attr => {
-      if (attr && el.hasAttribute && el.hasAttribute(attr)) {
-        components.push({
-          type: 'attribute',
-          selector: `[${attr}="${el.getAttribute(attr)}"]`,
-          label: `Attribute: ${attr}="${el.getAttribute(attr)}"`,
-          selected: false
-        });
-      }
-    });
+    attributesToCheck.push(...customAttributes);
   }
   
-  // Other standard attributes that might be useful
-  ['name', 'value', 'title', 'alt', 'role'].forEach(attr => {
-    if (el.hasAttribute(attr) && !customAttributes.includes(attr)) {
+  // Remove duplicates and check each attribute
+  const uniqueAttributes = [...new Set(attributesToCheck)];
+  uniqueAttributes.forEach(attr => {
+    if (el.hasAttribute && el.hasAttribute(attr)) {
       const value = el.getAttribute(attr);
-      if (value) {
+      if (value && value.trim()) {
         components.push({
           type: 'attribute',
           selector: `[${attr}="${value}"]`,
@@ -588,8 +577,7 @@ function generateSelectorComponents(el) {
   
   // Text content component (for contains selector)
   const text = (el.textContent || '').trim();
-  if (text && text.length < 50 && text.length > 2) {
-    // Truncate long text for display
+  if (text && text.length > 2 && text.length < 50) {
     const displayText = text.length > 30 ? text.substring(0, 30) + '...' : text;
     components.push({
       type: 'contains',
