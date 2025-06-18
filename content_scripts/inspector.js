@@ -40,8 +40,7 @@ let lastElement = null;
 let selectorOverlay = null;
 let selectorOverlayDrag = { dragging: false, offsetX: 0, offsetY: 0 };
 let currentElement = null;
-let currentSelectorOptions = [];
-let currentSelectorIndex = 0;
+let currentSelectorComponents = [];
 let parentStack = [];
 let childIndexStack = [];
 let customAttributes = [];
@@ -94,11 +93,14 @@ async function createSelectorOverlay() {
       <button id="tp-clear-selection" style="background:#f44336;color:#fff;border:none;border-radius:6px;padding:8px 12px;font-weight:600;font-size:15px;cursor:pointer;">Clear Selection</button>
       <span id="tp-selected-count" style="font-size:14px;color:#1976d2;font-weight:600;">Selected: 0</span>
     </div>
-    <div id="tp-selector-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:2px;"></div>
     <div style="display:flex;align-items:center;gap:8px;">
       <button id="tp-up-element" title="Select Parent" style="background:#f3f4f8;border:none;border-radius:5px;padding:4px 8px;cursor:pointer;font-size:16px;">↑</button>
       <button id="tp-down-element" title="Select Child" style="background:#f3f4f8;border:none;border-radius:5px;padding:4px 8px;cursor:pointer;font-size:16px;">↓</button>
       <span style="font-size:13px;color:#888;">Navigate DOM</span>
+    </div>
+    <div id="tp-components-section" style="margin-top:8px;border:1px solid #e0e4ea;border-radius:6px;padding:10px;background:#f9f9f9;">
+      <div style="font-size:13px;color:#444;font-weight:600;margin-bottom:6px;">Select components to build custom selector:</div>
+      <div id="tp-component-list" style="display:flex;flex-direction:column;gap:4px;max-height:120px;overflow-y:auto;"></div>
     </div>
     <div style="margin-top:6px;">
       <label style="font-size:13px;color:#444;">Selection:</label>
@@ -117,6 +119,7 @@ async function createSelectorOverlay() {
   // Clear selection button
   selectorOverlay.querySelector('#tp-clear-selection').onclick = clearSelection;
   updateSelectedCount();
+  
   document.body.appendChild(selectorOverlay);
 
   // Custom attribute input logic always present
@@ -136,8 +139,8 @@ async function createSelectorOverlay() {
     input.value = customAttributes.join(', ');
     // Re-show overlay to update selector options
     if (currentElement) {
-      const options = generateSelector(currentElement);
-      showSelectorOverlay(options, currentElement);
+      currentSelectorComponents = generateSelectorComponents(currentElement);
+      showSelectorOverlay([], currentElement);
     }
   };
 
@@ -181,51 +184,30 @@ async function showSelectorOverlay(selectorOptions, element) {
   // Only update navigation state if navigating to a new element (not just re-rendering)
   if (element !== currentElement) {
     currentElement = element;
-    currentSelectorOptions = selectorOptions || [];
-    currentSelectorIndex = 0;
+    currentSelectorComponents = generateSelectorComponents(element);
   }
   // Highlight the selected element in the DOM
   if (currentElement) {
     highlightElement(currentElement);
   }
 
-  // Render selector chips
-  const chips = selectorOverlay.querySelector('#tp-selector-chips');
-  chips.innerHTML = '';
-  currentSelectorOptions.forEach((opt, idx) => {
-    const chip = document.createElement('span');
-    chip.textContent = opt.selector;
-    chip.style.background = idx === currentSelectorIndex ? '#e3f2fd' : '#f3f4f8';
-    chip.style.color = '#1976d2';
-    chip.style.borderRadius = '5px';
-    chip.style.padding = '3px 8px';
-    chip.style.fontWeight = '600';
-    chip.style.fontSize = '13px';
-    chip.style.marginRight = '2px';
-    chip.style.cursor = 'pointer';
-    chip.style.border = idx === currentSelectorIndex ? '1.5px solid #1976d2' : '1.5px solid transparent';
-    chip.onclick = () => {
-      currentSelectorIndex = idx;
-      updateSelectorInput();
-      // Only update chip highlights, not the whole overlay (prevents reset)
-      Array.from(chips.children).forEach((c, i) => {
-        c.style.background = i === currentSelectorIndex ? '#e3f2fd' : '#f3f4f8';
-        c.style.border = i === currentSelectorIndex ? '1.5px solid #1976d2' : '1.5px solid transparent';
-      });
-    };
-    chips.appendChild(chip);
-  });
-
+  updateComponentsList();
   updateSelectorInput();
 
   // Copy button
   selectorOverlay.querySelector('#tp-copy-selector').onclick = () => {
-    navigator.clipboard.writeText(currentSelectorOptions[currentSelectorIndex].selector);
+    const selector = buildCustomSelector();
+    if (selector) {
+      navigator.clipboard.writeText(selector);
+    }
   };
   // Validate button
   selectorOverlay.querySelector('#tp-validate-selector').onclick = () => {
-    const count = countMatchesDeep(currentSelectorOptions[currentSelectorIndex].selector);
-    selectorOverlay.querySelector('#tp-match-count').textContent = `Matches: ${count} element${count === 1 ? '' : 's'}`;
+    const selector = buildCustomSelector();
+    if (selector) {
+      const count = countMatchesDeep(selector);
+      selectorOverlay.querySelector('#tp-match-count').textContent = `Matches: ${count} element${count === 1 ? '' : 's'}`;
+    }
   };
 
   // Up navigation: go to parent and remember which child you came from
@@ -237,8 +219,7 @@ async function showSelectorOverlay(selectorOptions, element) {
       const idx = children.indexOf(currentElement);
       parentStack.push(currentElement);
       childIndexStack.push(idx);
-      const options = generateSelector(parent);
-      showSelectorOverlay(options, parent);
+      showSelectorOverlay([], parent);
     }
   };
   // Down navigation: return to the child you came from, if possible
@@ -246,13 +227,11 @@ async function showSelectorOverlay(selectorOptions, element) {
     if (parentStack.length > 0 && childIndexStack.length > 0) {
       const child = parentStack.pop();
       childIndexStack.pop();
-      const options = generateSelector(child);
-      showSelectorOverlay(options, child);
+      showSelectorOverlay([], child);
     } else if (currentElement && currentElement.children.length > 0) {
       // Fallback: select first child
       const child = currentElement.children[0];
-      const options = generateSelector(child);
-      showSelectorOverlay(options, child);
+      showSelectorOverlay([], child);
     }
   };
 
@@ -263,14 +242,104 @@ async function showSelectorOverlay(selectorOptions, element) {
   };
 }
 
+function updateComponentsList() {
+  if (!selectorOverlay) return;
+  const componentList = selectorOverlay.querySelector('#tp-component-list');
+  if (!componentList || !Array.isArray(currentSelectorComponents)) return;
+  
+  componentList.innerHTML = '';
+  currentSelectorComponents.forEach((component, idx) => {
+    const item = document.createElement('label');
+    item.style.display = 'flex';
+    item.style.alignItems = 'center';
+    item.style.gap = '6px';
+    item.style.cursor = 'pointer';
+    item.style.fontSize = '13px';
+    item.style.padding = '2px 0';
+    
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = component.selected;
+    checkbox.style.marginRight = '4px';
+    
+    const label = document.createElement('span');
+    label.textContent = component.label;
+    label.style.color = component.selected ? '#1976d2' : '#666';
+    
+    item.appendChild(checkbox);
+    item.appendChild(label);
+    componentList.appendChild(item);
+    
+    // Update component selection and UI when checkbox changes
+    checkbox.onchange = () => {
+      currentSelectorComponents[idx].selected = checkbox.checked;
+      label.style.color = checkbox.checked ? '#1976d2' : '#666';
+      updateSelectorInput();
+    };
+  });
+}
+
+function buildCustomSelector() {
+  if (!currentSelectorComponents || !Array.isArray(currentSelectorComponents)) return '';
+  
+  const selectedComponents = currentSelectorComponents.filter(c => c.selected);
+  if (selectedComponents.length === 0) return '';
+  
+  // Group components by type to build a valid selector
+  const tag = selectedComponents.find(c => c.type === 'tag');
+  const id = selectedComponents.find(c => c.type === 'id');
+  const classes = selectedComponents.filter(c => c.type === 'class');
+  const attributes = selectedComponents.filter(c => c.type === 'attribute');
+  const nthChild = selectedComponents.find(c => c.type === 'nth-child');
+  const contains = selectedComponents.find(c => c.type === 'contains');
+  
+  let selector = '';
+  
+  // Handle contains selector specially - it needs to modify the whole selector
+  if (contains) {
+    if (tag) {
+      selector = tag.selector + contains.selector;
+    } else {
+      selector = '*' + contains.selector;
+    }
+  } else {
+    // Build normal selector
+    if (tag) {
+      selector += tag.selector;
+    }
+    
+    if (id) {
+      selector += id.selector;
+    }
+    
+    classes.forEach(c => {
+      selector += c.selector;
+    });
+    
+    attributes.forEach(a => {
+      selector += a.selector;
+    });
+    
+    if (nthChild) {
+      selector += nthChild.selector;
+    }
+  }
+  
+  return selector;
+}
+
 function updateSelectorInput() {
   const input = selectorOverlay.querySelector('#tp-selector-input');
-  if (currentSelectorOptions.length > 0) {
-    input.value = currentSelectorOptions[currentSelectorIndex].selector;
-  } else {
-    input.value = '';
+  if (!input) return;
+  
+  // Always show custom built selector
+  input.value = buildCustomSelector();
+  
+  // Clear match count when selector changes
+  const matchCount = selectorOverlay.querySelector('#tp-match-count');
+  if (matchCount) {
+    matchCount.textContent = '';
   }
-  selectorOverlay.querySelector('#tp-match-count').textContent = '';
 }
 
 function createHighlightBox() {
@@ -314,48 +383,103 @@ function highlightElement(el) {
   highlightBox.style.height = rect.height + 'px';
 }
 
-function generateSelector(el) {
-  // Generate multiple selector options: id, class, data-*, nth-child, contains(text)
+function generateSelectorComponents(el) {
+  // Generate individual selector components that can be combined
   if (!el) return [];
-  const options = [];
-  if (el.id && document.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) {
-    options.push({type: 'id', selector: `#${el.id}`});
-  }
-  if (el.getAttribute('data-testid')) {
-    options.push({type: 'data-testid', selector: `[data-testid="${el.getAttribute('data-testid')}"]`});
-  }
-  // Add custom attribute selectors
-  if (Array.isArray(customAttributes)) {
-    customAttributes.forEach(attr => {
-      if (attr && el.hasAttribute && el.hasAttribute(attr)) {
-        options.push({type: attr, selector: `[${attr}="${el.getAttribute(attr)}"]`});
-      }
+  const components = [];
+  
+  // Tag name component (not selected by default)
+  components.push({
+    type: 'tag',
+    selector: el.tagName.toLowerCase(),
+    label: `Tag: ${el.tagName.toLowerCase()}`,
+    selected: false
+  });
+  
+  // ID component
+  if (el.id) {
+    components.push({
+      type: 'id',
+      selector: `#${CSS.escape(el.id)}`,
+      label: `ID: #${el.id}`,
+      selected: false
     });
   }
-  if (el.classList.length) {
-    const classSelector = Array.from(el.classList).map(c => `.${CSS.escape(c)}`).join('');
-    if (document.querySelectorAll(`${el.tagName.toLowerCase()}${classSelector}`).length === 1) {
-      options.push({type: 'class', selector: `${el.tagName.toLowerCase()}${classSelector}`});
-    }
+  
+  // Individual class components
+  if (el.classList.length > 0) {
+    Array.from(el.classList).forEach(className => {
+      components.push({
+        type: 'class',
+        selector: `.${CSS.escape(className)}`,
+        label: `Class: .${className}`,
+        selected: false
+      });
+    });
   }
-  // Fallback: tag + nth-child
+  
+  // Standard and custom attribute components
+  const attributesToCheck = [
+    'data-testid',
+    'data-qa', 
+    'data-role',
+    'name',
+    'value',
+    'title',
+    'alt',
+    'role'
+  ];
+  
+  // Add custom attributes from storage
+  if (Array.isArray(customAttributes)) {
+    attributesToCheck.push(...customAttributes);
+  }
+  
+  // Remove duplicates and check each attribute
+  const uniqueAttributes = [...new Set(attributesToCheck)];
+  uniqueAttributes.forEach(attr => {
+    if (el.hasAttribute && el.hasAttribute(attr)) {
+      const value = el.getAttribute(attr);
+      if (value && value.trim()) {
+        components.push({
+          type: 'attribute',
+          selector: `[${attr}="${value}"]`,
+          label: `Attribute: ${attr}="${value}"`,
+          selected: false
+        });
+      }
+    }
+  });
+  
+  // Nth-child component
   if (el.parentElement) {
     const siblings = Array.from(el.parentElement.children).filter(e => e.tagName === el.tagName);
     if (siblings.length > 1) {
       const idx = siblings.indexOf(el) + 1;
-      options.push({type: 'nth-child', selector: `${el.tagName.toLowerCase()}:nth-of-type(${idx})`});
+      components.push({
+        type: 'nth-child',
+        selector: `:nth-of-type(${idx})`,
+        label: `Position: nth-of-type(${idx})`,
+        selected: false
+      });
     }
   }
-  // Contains selector (text content)
+  
+  // Text content component (for contains selector)
   const text = (el.textContent || '').trim();
-  if (text && text.length < 100) {
-    // Use :contains pseudo-class (not standard, but some tools support it)
-    options.push({type: 'contains', selector: `${el.tagName.toLowerCase()}:contains("${text}")`});
+  if (text && text.length > 2 && text.length < 50) {
+    const displayText = text.length > 30 ? text.substring(0, 30) + '...' : text;
+    components.push({
+      type: 'contains',
+      selector: `:contains("${text}")`,
+      label: `Text: contains("${displayText}")`,
+      selected: false
+    });
   }
-  // Always add tag name as last resort
-  options.push({type: 'tag', selector: el.tagName.toLowerCase()});
-  return options;
+  
+  return components;
 }
+
 
 function handleMouseMove(e) {
   if (!inspectorActive) return;
@@ -412,9 +536,8 @@ function handleClick(e) {
   removeHighlightBox();
   document.removeEventListener('mousemove', handleMouseMove, true);
   document.removeEventListener('click', handleClick, true);
-  const selectorOptions = generateSelector(el);
-  console.log('[Tagging Power-Up] Element selected:', selectorOptions);
-  showSelectorOverlay(selectorOptions, el);
+  console.log('[Tagging Power-Up] Element selected');
+  showSelectorOverlay([], el);
   if (selectorOverlay) selectorOverlay.style.display = '';
 }
 
