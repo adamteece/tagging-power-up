@@ -40,10 +40,7 @@ let lastElement = null;
 let selectorOverlay = null;
 let selectorOverlayDrag = { dragging: false, offsetX: 0, offsetY: 0 };
 let currentElement = null;
-let currentSelectorOptions = [];
-let currentSelectorIndex = 0;
 let currentSelectorComponents = [];
-let usingCustomSelector = false;
 let parentStack = [];
 let childIndexStack = [];
 let customAttributes = [];
@@ -96,19 +93,12 @@ async function createSelectorOverlay() {
       <button id="tp-clear-selection" style="background:#f44336;color:#fff;border:none;border-radius:6px;padding:8px 12px;font-weight:600;font-size:15px;cursor:pointer;">Clear Selection</button>
       <span id="tp-selected-count" style="font-size:14px;color:#1976d2;font-weight:600;">Selected: 0</span>
     </div>
-    <div id="tp-selector-chips" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:2px;"></div>
     <div style="display:flex;align-items:center;gap:8px;">
       <button id="tp-up-element" title="Select Parent" style="background:#f3f4f8;border:none;border-radius:5px;padding:4px 8px;cursor:pointer;font-size:16px;">↑</button>
       <button id="tp-down-element" title="Select Child" style="background:#f3f4f8;border:none;border-radius:5px;padding:4px 8px;cursor:pointer;font-size:16px;">↓</button>
       <span style="font-size:13px;color:#888;">Navigate DOM</span>
     </div>
-    <div style="margin-top:10px;">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
-        <label style="font-size:14px;color:#444;font-weight:600;">Selector Mode:</label>
-        <button id="tp-toggle-mode" style="background:#fff;color:#1976d2;border:1px solid #1976d2;border-radius:4px;padding:4px 12px;font-weight:600;cursor:pointer;font-size:13px;">Custom Builder</button>
-      </div>
-    </div>
-    <div id="tp-components-section" style="display:none;margin-top:8px;border:1px solid #e0e4ea;border-radius:6px;padding:10px;background:#f9f9f9;">
+    <div id="tp-components-section" style="margin-top:8px;border:1px solid #e0e4ea;border-radius:6px;padding:10px;background:#f9f9f9;">
       <div style="font-size:13px;color:#444;font-weight:600;margin-bottom:6px;">Select components to build custom selector:</div>
       <div id="tp-component-list" style="display:flex;flex-direction:column;gap:4px;max-height:120px;overflow-y:auto;"></div>
     </div>
@@ -130,38 +120,6 @@ async function createSelectorOverlay() {
   selectorOverlay.querySelector('#tp-clear-selection').onclick = clearSelection;
   updateSelectedCount();
   
-  // Toggle mode button
-  selectorOverlay.querySelector('#tp-toggle-mode').onclick = () => {
-    usingCustomSelector = !usingCustomSelector;
-    const toggleBtn = selectorOverlay.querySelector('#tp-toggle-mode');
-    const componentsSection = selectorOverlay.querySelector('#tp-components-section');
-    const chipsSection = selectorOverlay.querySelector('#tp-selector-chips');
-    
-    if (usingCustomSelector) {
-      toggleBtn.textContent = 'Preset Selectors';
-      toggleBtn.style.background = '#1976d2';
-      toggleBtn.style.color = '#fff';
-      componentsSection.style.display = 'block';
-      chipsSection.style.display = 'none';
-      
-      // Generate and show components for current element
-      if (currentElement) {
-        currentSelectorComponents = generateSelectorComponents(currentElement);
-        updateComponentsList();
-        updateSelectorInput();
-      }
-    } else {
-      toggleBtn.textContent = 'Custom Builder';
-      toggleBtn.style.background = '#fff';
-      toggleBtn.style.color = '#1976d2';
-      componentsSection.style.display = 'none';
-      chipsSection.style.display = 'flex';
-      
-      // Reset to preset selector mode
-      updateSelectorInput();
-    }
-  };
-  
   document.body.appendChild(selectorOverlay);
 
   // Custom attribute input logic always present
@@ -181,10 +139,8 @@ async function createSelectorOverlay() {
     input.value = customAttributes.join(', ');
     // Re-show overlay to update selector options
     if (currentElement) {
-      const options = generateSelector(currentElement);
-      // Regenerate components as well since custom attributes changed
       currentSelectorComponents = generateSelectorComponents(currentElement);
-      showSelectorOverlay(options, currentElement);
+      showSelectorOverlay([], currentElement);
     }
   };
 
@@ -228,10 +184,6 @@ async function showSelectorOverlay(selectorOptions, element) {
   // Only update navigation state if navigating to a new element (not just re-rendering)
   if (element !== currentElement) {
     currentElement = element;
-    currentSelectorOptions = selectorOptions || [];
-    currentSelectorIndex = 0;
-    // Reset to preset mode when selecting new element
-    usingCustomSelector = false;
     currentSelectorComponents = generateSelectorComponents(element);
   }
   // Highlight the selected element in the DOM
@@ -239,49 +191,19 @@ async function showSelectorOverlay(selectorOptions, element) {
     highlightElement(currentElement);
   }
 
-  // Render selector chips
-  const chips = selectorOverlay.querySelector('#tp-selector-chips');
-  chips.innerHTML = '';
-  currentSelectorOptions.forEach((opt, idx) => {
-    const chip = document.createElement('span');
-    chip.textContent = opt.selector;
-    chip.style.background = idx === currentSelectorIndex ? '#e3f2fd' : '#f3f4f8';
-    chip.style.color = '#1976d2';
-    chip.style.borderRadius = '5px';
-    chip.style.padding = '3px 8px';
-    chip.style.fontWeight = '600';
-    chip.style.fontSize = '13px';
-    chip.style.marginRight = '2px';
-    chip.style.cursor = 'pointer';
-    chip.style.border = idx === currentSelectorIndex ? '1.5px solid #1976d2' : '1.5px solid transparent';
-    chip.onclick = () => {
-      currentSelectorIndex = idx;
-      updateSelectorInput();
-      // Only update chip highlights, not the whole overlay (prevents reset)
-      Array.from(chips.children).forEach((c, i) => {
-        c.style.background = i === currentSelectorIndex ? '#e3f2fd' : '#f3f4f8';
-        c.style.border = i === currentSelectorIndex ? '1.5px solid #1976d2' : '1.5px solid transparent';
-      });
-    };
-    chips.appendChild(chip);
-  });
-
+  updateComponentsList();
   updateSelectorInput();
 
   // Copy button
   selectorOverlay.querySelector('#tp-copy-selector').onclick = () => {
-    const selector = usingCustomSelector ? 
-      buildCustomSelector() : 
-      currentSelectorOptions[currentSelectorIndex].selector;
+    const selector = buildCustomSelector();
     if (selector) {
       navigator.clipboard.writeText(selector);
     }
   };
   // Validate button
   selectorOverlay.querySelector('#tp-validate-selector').onclick = () => {
-    const selector = usingCustomSelector ? 
-      buildCustomSelector() : 
-      currentSelectorOptions[currentSelectorIndex].selector;
+    const selector = buildCustomSelector();
     if (selector) {
       const count = countMatchesDeep(selector);
       selectorOverlay.querySelector('#tp-match-count').textContent = `Matches: ${count} element${count === 1 ? '' : 's'}`;
@@ -297,8 +219,7 @@ async function showSelectorOverlay(selectorOptions, element) {
       const idx = children.indexOf(currentElement);
       parentStack.push(currentElement);
       childIndexStack.push(idx);
-      const options = generateSelector(parent);
-      showSelectorOverlay(options, parent);
+      showSelectorOverlay([], parent);
     }
   };
   // Down navigation: return to the child you came from, if possible
@@ -306,13 +227,11 @@ async function showSelectorOverlay(selectorOptions, element) {
     if (parentStack.length > 0 && childIndexStack.length > 0) {
       const child = parentStack.pop();
       childIndexStack.pop();
-      const options = generateSelector(child);
-      showSelectorOverlay(options, child);
+      showSelectorOverlay([], child);
     } else if (currentElement && currentElement.children.length > 0) {
       // Fallback: select first child
       const child = currentElement.children[0];
-      const options = generateSelector(child);
-      showSelectorOverlay(options, child);
+      showSelectorOverlay([], child);
     }
   };
 
@@ -321,26 +240,6 @@ async function showSelectorOverlay(selectorOptions, element) {
     activateInspector();
     selectorOverlay.style.display = 'none';
   };
-  
-  // Update UI state based on current mode
-  const toggleBtn = selectorOverlay.querySelector('#tp-toggle-mode');
-  const componentsSection = selectorOverlay.querySelector('#tp-components-section');
-  const chipsSection = selectorOverlay.querySelector('#tp-selector-chips');
-  
-  if (usingCustomSelector) {
-    toggleBtn.textContent = 'Preset Selectors';
-    toggleBtn.style.background = '#1976d2';
-    toggleBtn.style.color = '#fff';
-    componentsSection.style.display = 'block';
-    chipsSection.style.display = 'none';
-    updateComponentsList();
-  } else {
-    toggleBtn.textContent = 'Custom Builder';
-    toggleBtn.style.background = '#fff';
-    toggleBtn.style.color = '#1976d2';
-    componentsSection.style.display = 'none';
-    chipsSection.style.display = 'flex';
-  }
 }
 
 function updateComponentsList() {
@@ -433,17 +332,8 @@ function updateSelectorInput() {
   const input = selectorOverlay.querySelector('#tp-selector-input');
   if (!input) return;
   
-  if (usingCustomSelector) {
-    // Show custom built selector
-    input.value = buildCustomSelector();
-  } else {
-    // Show preset selector
-    if (currentSelectorOptions.length > 0) {
-      input.value = currentSelectorOptions[currentSelectorIndex].selector;
-    } else {
-      input.value = '';
-    }
-  }
+  // Always show custom built selector
+  input.value = buildCustomSelector();
   
   // Clear match count when selector changes
   const matchCount = selectorOverlay.querySelector('#tp-match-count');
@@ -498,12 +388,12 @@ function generateSelectorComponents(el) {
   if (!el) return [];
   const components = [];
   
-  // Tag name component (always selected by default)
+  // Tag name component (not selected by default)
   components.push({
     type: 'tag',
     selector: el.tagName.toLowerCase(),
     label: `Tag: ${el.tagName.toLowerCase()}`,
-    selected: true
+    selected: false
   });
   
   // ID component
@@ -590,48 +480,6 @@ function generateSelectorComponents(el) {
   return components;
 }
 
-function generateSelector(el) {
-  // Generate multiple selector options: id, class, data-*, nth-child, contains(text)
-  if (!el) return [];
-  const options = [];
-  if (el.id && document.querySelectorAll(`#${CSS.escape(el.id)}`).length === 1) {
-    options.push({type: 'id', selector: `#${el.id}`});
-  }
-  if (el.getAttribute('data-testid')) {
-    options.push({type: 'data-testid', selector: `[data-testid="${el.getAttribute('data-testid')}"]`});
-  }
-  // Add custom attribute selectors
-  if (Array.isArray(customAttributes)) {
-    customAttributes.forEach(attr => {
-      if (attr && el.hasAttribute && el.hasAttribute(attr)) {
-        options.push({type: attr, selector: `[${attr}="${el.getAttribute(attr)}"]`});
-      }
-    });
-  }
-  if (el.classList.length) {
-    const classSelector = Array.from(el.classList).map(c => `.${CSS.escape(c)}`).join('');
-    if (document.querySelectorAll(`${el.tagName.toLowerCase()}${classSelector}`).length === 1) {
-      options.push({type: 'class', selector: `${el.tagName.toLowerCase()}${classSelector}`});
-    }
-  }
-  // Fallback: tag + nth-child
-  if (el.parentElement) {
-    const siblings = Array.from(el.parentElement.children).filter(e => e.tagName === el.tagName);
-    if (siblings.length > 1) {
-      const idx = siblings.indexOf(el) + 1;
-      options.push({type: 'nth-child', selector: `${el.tagName.toLowerCase()}:nth-of-type(${idx})`});
-    }
-  }
-  // Contains selector (text content)
-  const text = (el.textContent || '').trim();
-  if (text && text.length < 100) {
-    // Use :contains pseudo-class (not standard, but some tools support it)
-    options.push({type: 'contains', selector: `${el.tagName.toLowerCase()}:contains("${text}")`});
-  }
-  // Always add tag name as last resort
-  options.push({type: 'tag', selector: el.tagName.toLowerCase()});
-  return options;
-}
 
 function handleMouseMove(e) {
   if (!inspectorActive) return;
@@ -688,9 +536,8 @@ function handleClick(e) {
   removeHighlightBox();
   document.removeEventListener('mousemove', handleMouseMove, true);
   document.removeEventListener('click', handleClick, true);
-  const selectorOptions = generateSelector(el);
-  console.log('[Tagging Power-Up] Element selected:', selectorOptions);
-  showSelectorOverlay(selectorOptions, el);
+  console.log('[Tagging Power-Up] Element selected');
+  showSelectorOverlay([], el);
   if (selectorOverlay) selectorOverlay.style.display = '';
 }
 
